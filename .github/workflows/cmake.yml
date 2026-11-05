@@ -1,0 +1,63 @@
+name: cmake
+
+on:
+  push:
+    branches: [ master, dev** ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  TARGET_ARCH: linux64
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        BUILD_TYPE: [Release, Debug]
+
+    name: Build AVP64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Download software
+        working-directory: ./sw
+        run: |
+          wget https://github.com/aut0/avp64_sw/releases/download/v2024.08.02/buildroot_6_5_6.tar.gz
+          tar -xvf buildroot_6_5_6.tar.gz
+          rm buildroot_6_5_6.tar.gz
+
+      - name: Setup Dependencies
+        run: |
+          sudo add-apt-repository -y "deb http://archive.ubuntu.com/ubuntu `lsb_release -sc` main universe restricted multiverse"
+          sudo apt-get update -y -qq
+          sudo apt-get install build-essential libelf-dev libsdl2-dev libvncserver-dev libslirp-dev
+
+      - name: Configure
+        run: |
+          cmake \
+            -B ${{github.workspace}}/build \
+            -DCMAKE_BUILD_TYPE=${{matrix.BUILD_TYPE}} \
+            -DAVP64_BUILD_TESTS=ON \
+            -DAVP64_BUILD_RUNNER=ON
+
+      - name: Build
+        run: cmake --build ${{github.workspace}}/build --config ${{matrix.BUILD_TYPE}} -j $(nproc)
+
+      - name: Test
+        env:
+          LD_LIBRARY_PATH: ${{github.workspace}}/build/ocx-qemu-arm
+        working-directory: ${{github.workspace}}/build
+        run: |
+          ctest -C ${{matrix.BUILD_TYPE}} --output-on-failure --output-junit testreport.xml
+
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v4
+        if: always()
+        with:
+          report_paths: ${{github.workspace}}/build/testreport.xml

@@ -1,0 +1,13 @@
+BUILD/
+/install/
+.settings/
+.cproject
+.project
+gdbscript*
+.idea
+/build/
+.vscode
+.cache
+compile_commands.json
+linux-src/
+/cmake/

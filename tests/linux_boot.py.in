@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+
+##############################################################################
+#                                                                            #
+# Copyright 2024 Nils Bosbach, Jan Henrik Weinstock                          #
+#                                                                            #
+# This software is licensed under the MIT license.                           #
+# A copy of the license can be found in the LICENSE file at the root         #
+# of the source tree.                                                        #
+#                                                                            #
+##############################################################################
+
+import sys
+import pexpect
+import time
+
+sim='$<TARGET_FILE:avp64-runner>'
+cfg='@config@'
+
+cmdline = f'{sim} -f {cfg} -c system.term0.backends=term'
+
+print(cmdline)
+
+p = pexpect.spawn(cmdline, logfile=sys.stdout, timeout=None, encoding='utf-8')
+
+# did all secondary cpus boot?
+for cpu in range(1, @nrcpu@):
+    p.expect(f'CPU{cpu}: Booted secondary processor 0x000000000{cpu}')
+
+# did our drivers initialize?
+p.expect('10009000.uart: ttyAMA0 at MMIO 0x10009000')
+p.expect('1000a000.uart: ttyAMA1 at MMIO 0x1000a000')
+p.expect('1000b000.uart: ttyAMA2 at MMIO 0x1000b000')
+p.expect('1000c000.uart: ttyAMA3 at MMIO 0x1000c000')
+p.expect('timeriomem_rng 10007000.rng: 32bits')
+p.expect('spi_oc_tiny 10020000.spi')
+p.expect('m_can_platform 10021000.can: m_can device registered')
+p.expect('smsc911x 10010000.lan9118 eth0')
+p.expect('rtc-ds1742 1000e000.rtc: registered as rtc0')
+p.expect('mmc0: SDHCI controller on 1000d000.mmc')
+p.expect('mmc0: new SDHC card at address 0000')
+
+# did we get a login prompt?
+p.expect('avp64 login:')
+p.sendline('root')
+
+# can we run commands?
+p.expect('# ')
+p.sendline('uname')
+p.expect('Linux')
+
+# did all processors boot up?
+p.expect('# ')
+p.sendline('cat /proc/cpuinfo')
+for cpu in range(@nrcpu@):
+    p.expect('processor')
+
+# CAN test -------------------------------------------------------------------
+p.expect('# ')
+p.sendline('ip addr')
+p.expect('can0:')
+
+# can we bringup the can controller?
+p.expect('# ')
+p.sendline('ip link set can0 up type can bitrate 1000000')
+
+# is the can if up?
+p.expect('# ')
+p.sendline('sleep 2 && cat /sys/class/net/can0/operstate')
+p.expect('up')
+
+# can we send a package?
+p.expect('# ')
+p.sendline('cansend can0 123#deadbeef && sleep 2')
+p.expect('# ')
+
+# check if can packed arrived
+with open('system.canbridge.tx', 'r') as f:
+    line = f.readline()
+    assert('frame #1 CAN 123 [00] de ad be ef' in line)
+
+# test ok - shut down simulation
+p.sendline('devmem 0x10008000 32 1')
+p.expect(pexpect.EOF)
+
